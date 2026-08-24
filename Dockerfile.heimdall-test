@@ -1,0 +1,12 @@
+# Smoke test: does @arihantdeva/heimdall + @nanonets/graft install + index + search in-container?
+FROM node:22-bookworm
+WORKDIR /app
+RUN npm init -y >/dev/null \
+ && npm install --no-audit --no-fund @arihantdeva/heimdall @nanonets/graft >/dev/null 2>&1
+# corpus must be a git repo (graft requires it) and graft build runs BEFORE search
+RUN mkdir -p /data/corpus && printf 'def optimize_portfolio(weights):\n    """EV optimizer entry point."""\n    return sum(w * r for w, r in weights)\n' > /data/corpus/quant.py \
+    && printf '# Notes\nUser prefers terse answers and Rust for CLI tools.\n' > /data/corpus/notes.md
+ENV HEIMDALL_HOME=/data/heimdall-home
+ENV PATH=/app/node_modules/.bin:$PATH
+RUN printf '#!/bin/sh\nexec node /app/node_modules/@nanonets/graft/dist/cli.js "$@"\n' > /usr/local/bin/graft && chmod +x /usr/local/bin/graft
+CMD ["sh", "-c", "cd /data/corpus && git init -q && git add -A && git -c user.email=t@t.co -c user.name=t commit -qm init && graft build >/dev/null 2>&1 && export HEIMDALL_REPOS=/data/corpus && heimdall search 'portfolio optimizer' -n 3 2>&1"]
