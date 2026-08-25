@@ -317,3 +317,30 @@ class TestChipBypasses:
         out = _validate_chips("sure thing [STRONG]", set())          # unearned
         assert "[STRONG]" not in out
         assert _validate_chips("fine [strong]", {"STRONG"}) == "fine [strong]"  # case differs: not a chip token, left as-is but never counted
+
+
+class TestClientModes:
+    def test_vertex_mode_selected_when_env_set(self, agent_cls, monkeypatch):
+        """USE_VERTEX=1 + no api_key -> Vertex client with project/location."""
+        agent, mem = agent_cls
+        monkeypatch.setenv("USE_VERTEX", "1")
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-proj")
+        import importlib
+        import model_config
+        importlib.reload(model_config)
+        from google import genai
+        created = {}
+        real_client = genai.Client
+
+        class FakeSDKClient(real_client):
+            def __init__(self, **kw):
+                created.update(kw)
+                raise RuntimeError("stop")   # don't need a real client
+
+        monkeypatch.setattr(genai, "Client", FakeSDKClient)
+        try:
+            agent.PartnerAgent()
+        except RuntimeError as e:
+            assert str(e) == "stop"
+        assert created.get("vertexai") is True
+        assert created.get("project") == "test-proj"

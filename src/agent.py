@@ -137,7 +137,17 @@ class ChipValidationError(Exception):
 class PartnerAgent:
     def __init__(self, api_key: str | None = None, model: str | None = None):
         from google import genai
-        self.client = genai.Client(api_key=api_key or os.environ["GEMINI_API_KEY"])
+        import model_config
+        if api_key:
+            self.client = genai.Client(api_key=api_key)
+        elif model_config.USE_VERTEX:
+            # Vertex mode: service identity, no API key (Cloud Run deploy)
+            self.client = genai.Client(
+                vertexai=True,
+                project=model_config.GCP_PROJECT,
+                location=model_config.LOCATION)
+        else:
+            self.client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
         self.model = model or os.environ.get("GEMINI_MODEL") or MODEL
         self.sessions: dict[str, Session] = {}
         self._gen_config = None
