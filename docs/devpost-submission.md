@@ -91,5 +91,5 @@ None external — all memory is user-supplied during conversation.
 - [x] Spin-up instructions (README)
 - [x] Architecture diagram (docs/architecture.md + image render)
 - [ ] ~4-min video (docs/demo-script.md) — USER ACTION: record per script
-- [ ] GCP proof artifacts — after deploy (T-007)
+- [x] GCP proof artifacts (docs/gcp-proof/: deployment-proof.md, service-url.txt, revisions.txt)
 - [x] Disclosure of pre-existing code (heimdall library)
