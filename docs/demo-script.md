@@ -25,7 +25,7 @@ mandatory (judges require deployment evidence). The kill happens FROM THE PAGE.
 - New message: "What format do you use for answers to me?"
 - Reply streams token-by-token and cites bullet lists **[STRONG]** unprompted.
 - "What's my name?" → "Deva [STRONG]".
-- Line: "Not a demo trick — memory is append-only files + verdicts computed by
+- Line: "Not a demo trick — memory is crash-safe files + verdicts computed by
   the engine, enforced by the server."
 
 ## Beat 5 — Honesty under adversarial probing (2:45–3:25)

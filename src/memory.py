@@ -2,7 +2,8 @@
 
 Design:
 - Facts are typed (identity/preference/person/project/skill/constraint/note),
-  append-only JSONL = audit trail. Latest entry per title is current truth;
+  JSONL with full revision history = audit trail. Latest entry per title is
+  current truth;
   prior entries are history (receipts).
 - Verdicts are COMPUTED, never claimed: STRONG / WEAK / CONFLICTED / STALE.
 - Supersession: a correction with the same title supersedes; if it contradicts
@@ -332,6 +333,7 @@ def recall(query: str, n: int = 4, now: int | None = None) -> list[dict]:
         return []
     now = now or _now()
     scored = []
+    _touched: list[dict] = []
     for r in active_rows():
         v = verdict_of(r["title"], now=now)
         # searchable text = title + body (titles carry intent: "editor", "style")
@@ -339,6 +341,10 @@ def recall(query: str, n: int = 4, now: int | None = None) -> list[dict]:
         overlap = len(q & r_terms) / max(1, min(len(q), len(r_terms)))
         if overlap <= 0:
             continue          # recall is relevance search, not a dump
+        # F6 fix: using a fact counts as using it — bump last_used so heavily
+        # recalled facts don't decay to STALE while in daily service
+        r["last_used"] = max(r.get("last_used", 0), now)
+        _touched.append(r)
         fresh = 1.0 if (now - r["ts"]) < RECENCY_S else 0.3
         rein = min(r.get("reinforcements", 0), 3) * 0.25
         penalty = {"STALE": -0.6, "WEAK": -0.4, "CONFLICTED": -0.5}.get(v, 0.0)
@@ -352,6 +358,19 @@ def recall(query: str, n: int = 4, now: int | None = None) -> list[dict]:
             "receipt": {"utterance": r["body"], "ts": r["ts"]},
         })
     scored.sort(key=lambda h: -h["score"])
+    if _touched:
+        # persist last_used bumps through the locked write path
+        with _WRITE_LOCK:
+            rows = _load()
+            by_key = {(r.get("title"), r.get("ts")): r for r in rows}
+            changed = False
+            for t in _touched:
+                cur = by_key.get((t["title"], t["ts"]))
+                if cur is not None and cur.get("last_used") != t["last_used"]:
+                    cur["last_used"] = t["last_used"]
+                    changed = True
+            if changed:
+                _save(rows)
     return [h for h in scored if h["score"] > 0][:n]
 
 
@@ -464,10 +483,11 @@ def _sleep_locked(days: float, now: int) -> dict:
             del cur["stale_since"]   # used again -> un-stales
             report["promoted"] += 1
 
-    # sleep counts as a use cycle: reinforcement signal strengthens (identity
-    # facts get a floor boost so a name taught once still answers STRONG weeks later)
+    # sleep counts as a use cycle: reinforcement signal strengthens. Identity
+    # facts get a floor boost ONLY if unhedged (F5: "maybe I am X" stays WEAK)
     for t, cur in by_title.items():
-        if cur["kind"] in IDENTITY_KINDS and cur.get("reinforcements", 0) == 0:
+        if cur["kind"] in IDENTITY_KINDS and cur.get("reinforcements", 0) == 0 \
+                and not _HEDGE_RE.search(cur["body"]):
             cur["reinforcements"] = 1
             report["promoted"] += 1
 

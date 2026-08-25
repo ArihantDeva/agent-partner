@@ -30,7 +30,7 @@
                      │                                                  │
  Memory engine (src/memory.py)                                          │
    ├─ typed facts w/ receipts (utterance + ts)                        │
-   ├─ append-only facts.jsonl = audit trail; supersession chains      │
+   ├─ facts.jsonl = revision-history audit trail; supersession chains │
    ├─ computed verdicts: STRONG/WEAK/CONFLICTED/STALE                 │
    ├─ hybrid recall: stemmed overlap + recency + reinforcement        │
    ├─ _WRITE_LOCK around all read-modify-write cycles                 │
@@ -60,7 +60,8 @@ Prompt rules ask nicely; the server enforces.
 
 ## Persistence model
 
-- `facts.jsonl` — append-only audit trail; latest active row per title is truth
+- `facts.jsonl` — every write keeps history (nothing deleted); latest active
+  row per title is current truth
 - `sessions/*.json` — per-session chat history, atomic tmp+rename writes,
   tombstoned on reset (never deleted)
 - Both live on Cloud Run volumes (`/data/memories`, `/data/sessions`);

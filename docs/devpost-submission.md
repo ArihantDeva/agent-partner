@@ -10,7 +10,8 @@ model cannot fake.
 
 ## Full description
 Every AI agent restarts from zero. Partner fixes that with memory as
-infrastructure: durable facts live in append-only files outside the chat
+infrastructure: durable facts live in crash-safe files (full revision
+history, nothing deleted) outside the chat
 window, survive a real process kill (killed live, from the web page, during
 the demo), and are injected into every conversation with **computed verdict
 labels enforced server-side**.

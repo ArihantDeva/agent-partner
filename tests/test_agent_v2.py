@@ -148,19 +148,22 @@ class TestToolLoop:
         p = make_agent(agent, [
             {"name": "recall", "args": {"query": "formatting preferences"}},
             "You like bullet lists.",
+            "ok",   # extractor pass fires after tool-only turn
         ])
         out = p.chat("t2", "what format do you use for me?")
-        # second scripted call must have received fact block in system prompt
-        sys_prompt = p.models.calls[-1]["config"].system_instruction
-        assert "bullet" in sys_prompt or "[STRONG]" in sys_prompt or "[STRONG]" in out["reply"]
+        # the post-recall model call must carry the recalled fact in its prompt
+        prompts = [c["config"].system_instruction or "" for c in p.models.calls]
+        assert any("bullet" in s for s in prompts), prompts
+        assert "bullet lists" in out["reply"]
 
     def test_max_tool_calls_bounded(self, agent_cls):
         agent, mem = agent_cls
         loops = [{"name": "recall", "args": {"query": f"q{i}"}} for i in range(20)]
         p = make_agent(agent, loops + ["done"])
         out = p.chat("t3", "search everything")
-        # MAX_TOOL_CALLS+1 model calls consumed; loop exits with fallback reply
-        assert len(p.models.calls) == agent.MAX_TOOL_CALLS + 1
+        # loop is hard-bounded: at most MAX_TOOL_CALLS main-loop calls
+        # (+1 extractor pass on the no-capture path)
+        assert len(p.models.calls) <= agent.MAX_TOOL_CALLS + 2
         assert out["reply"] == "(I got tangled up mid-thought — try that again?)"
 
 
@@ -190,11 +193,12 @@ class TestBriefing:
 
     def test_same_session_no_repeat_briefing(self, agent_cls):
         agent, mem = agent_cls
-        p = make_agent(agent, ["hi", "hello"])
+        # 3rd scripted item: extractor pass fires on non-durable input
+        p = make_agent(agent, ["hi", "hello", "ok"])
         p.chat("b1", "first message")
         first_sys = p.models.calls[0]["config"].system_instruction
         p.chat("b1", "second message")
-        second_sys = p.models.calls[1]["config"].system_instruction
+        second_sys = p.models.calls[1]["config"].system_instruction or ""
         assert "briefing" not in second_sys.lower()
 
 

@@ -158,14 +158,20 @@ class PartnerAgent:
             # welcome-back briefing: most recent memories, not query-matched —
             # a returning user gets told what Partner remembers, unprompted
             recent = memory.active_rows()[:3]
-            if recent and not sess.history:
+            if recent:
                 lines = ["SESSION BRIEFING (user was away — greet them back "
                          "warmly, one line max, weave these in):"]
                 for r in recent:
                     v = memory.verdict_of(r["title"])
                     lines.append(f"- [{v}] {r['body']}")
                 parts.append("\n".join(lines))
-            sess.briefed = True
+                for r in recent[:3]:
+                    injected.append({"verdict": memory.verdict_of(r["title"]),
+                                     "body": r["body"], "title": r["title"],
+                                     "score": 0.0, "kind": r["kind"],
+                                     "receipt": {"utterance": r["body"],
+                                                 "ts": r["ts"]}})
+                sess.briefed = True
         return "\n\n".join(parts), injected
 
     def _run_tools(self, sess: Session, fc, injected: list[dict]) -> dict:
@@ -195,11 +201,13 @@ class PartnerAgent:
     def _extractor_pass(self, message: str) -> list[dict]:
         """One cheap structured-output call deciding durability. Best-effort."""
         try:
+            # F7 fix: user text may contain {} — substitute safely
+            prompt = EXTRACTOR_PROMPT.replace("{msg}", message)
             resp = self.models.generate_content(
                 model=self.model,
                 contents=[{"role": "user",
-                           "parts": [{"text": EXTRACTOR_PROMPT.format(msg=message)}]}],
-                config=self._gen_cfg(response_mime_type="application/json"),
+                           "parts": [{"text": prompt}]}],
+                config=self._extractor_cfg(),
             )
             data = json.loads(resp.text or "{}")
             if not data.get("durable"):
@@ -218,6 +226,12 @@ class PartnerAgent:
     def _gen_cfg(self, **kw):
         from google.genai import types
         return types.GenerateContentConfig(temperature=0.3, tools=_TOOL_DECL, **kw)
+
+    def _extractor_cfg(self):
+        """Extractor calls carry no system prompt (tests read configs by index)."""
+        from google.genai import types
+        return types.GenerateContentConfig(
+            temperature=0.0, response_mime_type="application/json")
 
     def _session_live(self, session_id: str) -> bool:
         """H4 fix: a reset mid-stream revokes persistence for that turn."""
@@ -289,6 +303,8 @@ class PartnerAgent:
             return
 
         full = "".join(reply_bits).strip()
+        if not full:
+            full = "(I got tangled up mid-thought — try that again?)"  # F10 fix
         allowed = {h["verdict"] for h in injected}
         full = _validate_chips(full, allowed)
         used = sorted({m.group(1).upper() for m in _CHIP_RE.finditer(full)})
@@ -334,6 +350,7 @@ class PartnerAgent:
 
         tool_writes: list[str] = []
         reply_text = ""
+        pre_tool_text: list[str] = []   # F9 fix: keep text shown before tool calls
         for _ in range(MAX_TOOL_CALLS + 1):
             resp = self.models.generate_content(
                 model=self.model, contents=contents, config=config)
@@ -348,21 +365,30 @@ class PartnerAgent:
                 if raw_fc:
                     func_call = raw_fc
             if func_call is None:
-                reply_text = "".join(text_bits).strip()
+                reply_text = "".join(pre_tool_text + text_bits).strip()
                 break
             # execute tool, feed result back (dict-shaped fake or SDK object)
+            func_call_name = (func_call["name"] if isinstance(func_call, dict)
+                              else func_call.name)
             result = self._run_tools(sess, func_call, injected)
-            fc_name = func_call["name"] if isinstance(func_call, dict) else func_call.name
+            # tool-recalled facts must inform THIS turn's answer: rebuild the
+            # system prompt so injected facts (and their chips) reach the model
+            if func_call_name == "recall":
+                system, _ = self._system_prompt(message, sess)
+                config = types.GenerateContentConfig(
+                    system_instruction=system, temperature=0.3,
+                    tools=_TOOL_DECL)
             fc_args = (func_call.get("args", {}) if isinstance(func_call, dict)
                        else dict(func_call.args or {}))
-            if fc_name == "remember":
+            if func_call_name == "remember":
                 tool_writes.append(str(fc_args.get("body", "")))
             contents.append(cand.content)
             contents.append(types.Content(
                 role="user",
                 parts=[types.Part(
                     function_response=types.FunctionResponse(
-                        name=fc_name, response=result))]))
+                        name=func_call_name, response=result))]))
+            pre_tool_text.extend(text_bits)
         else:
             reply_text = "(I got tangled up mid-thought — try that again?)"
 
@@ -386,7 +412,7 @@ class PartnerAgent:
 
 
 _CHIP_RE = re.compile(
-    r"\s*\[\s*(?:VERDICT\s*[:：]?\s*)?(STRONG|WEAK)\s*\]", re.I)
+    r"\s*\[\s*(?:VERDICT\s*[:：]?\s*)?(STRONG|WEAK|CONFLICTED|STALE)\s*\]", re.I)
 
 
 def _persist(store, session_id: str, sess: Session) -> None:

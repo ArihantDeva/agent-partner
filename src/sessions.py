@@ -2,6 +2,8 @@
 
 Same philosophy as memory.py — files under SESSIONS_DIR, atomic writes,
 tolerant reads. Sessions are small; whole-store rewrite per save is fine.
+Note: saves keep the most recent 40 turns (older turns drop from the file;
+facts store carries the durable part).
 """
 from __future__ import annotations
 

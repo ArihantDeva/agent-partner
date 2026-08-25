@@ -12,8 +12,9 @@ honest verdict:
 - `[CONFLICTED]` — contradictory facts on record: both sides surfaced, user adjudicates.
 - `[STALE]` — unused for 45+ days: mentioned as possibly outdated.
 
-Kill the process, come back tomorrow, and it still knows you — memory lives in
-append-only files, not in the chat window.
+Kill the process, come back tomorrow, and it still knows you — memory lives
+in crash-safe files outside the chat window (atomic writes; every fact keeps
+its full revision history, nothing is ever deleted).
 
 ## The demo beat (why this wins)
 
@@ -43,7 +44,7 @@ Browser ──SSE──▶ FastAPI on Cloud Run ──▶ Gemini 3.5 Flash (GenA
    │                          │                  ▼
    └─ Kill button ──▶ os._exit ── platform restart
                                      │
-        memories/facts.jsonl ◀──recall┘  (append-only audit trail)
+        memories/facts.jsonl ◀──recall┘  (revision audit trail)
         sessions/*.json       (chat history survives restarts too)
 ```
 
