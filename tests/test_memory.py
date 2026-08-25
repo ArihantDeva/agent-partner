@@ -95,3 +95,31 @@ class TestRobustness:
 
     def test_missing_file(self, mem_dir):
         assert memory._facts() == []
+
+
+class TestConcurrencyAndBypasses:
+    def test_concurrent_remembers_all_persist(self, mem_dir):
+        """10 threads writing distinct titles -> all 10 readable after."""
+        import threading
+        threads = [
+            threading.Thread(target=memory.remember,
+                             args=(f"t{i}", f"fact number {i} about topic {i}"))
+            for i in range(10)
+        ]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        rows = memory.active_rows()
+        titles = {r["title"] for r in rows}
+        assert {f"t{i}" for i in range(10)} <= titles
+
+    def test_concurrent_same_title_last_write_readable(self, mem_dir):
+        """Racing writers on one title leave a readable, non-corrupt store."""
+        import threading
+        def w(n):
+            memory.remember("race", f"writer {n} says the thing {n}")
+        threads = [threading.Thread(target=w, args=(i,)) for i in range(8)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        # every row parses; at least one active 'race' fact survives
+        rows = [r for r in memory._load() if r.get("title") == "race"]
+        assert rows and any(r["status"] == "active" for r in rows)

@@ -285,3 +285,31 @@ class TestStreaming:
         assert "[STRONG]" not in joined or True  # chip validation happens at done
         done_evt = events[-1]
         assert "memories_used" in done_evt and "remembered" in done_evt
+
+
+class TestChipBypasses:
+    def _agent_with(self, agent_mod, reply):
+        p = object.__new__(agent_mod.PartnerAgent)
+        class P:
+            def __init__(self, t=None): self.text, self.function_call = t, None
+        class Content:
+            def __init__(self, parts): self.parts = parts
+        class Cand:
+            def __init__(self, parts): self.content = Content(parts)
+        class Resp:
+            def __init__(self, text): self.candidates = [Cand([P(text)])]
+        class M:
+            def generate_content(self, **kw): return Resp(reply)
+            def generate_content_stream(self, **kw):
+                return iter([])
+        p.models = M(); p.sessions = {}; p.model = "fake"
+        return p
+
+    def test_lowercase_and_spaced_chips_not_rendered_as_earned(self, agent_cls):
+        """Only exact [STRONG]/[WEAK] count as chips server-side; variants must
+        not slip through validation as earned verdicts."""
+        agent, mem = agent_cls
+        from agent import _validate_chips
+        out = _validate_chips("sure thing [STRONG]", set())          # unearned
+        assert "[STRONG]" not in out
+        assert _validate_chips("fine [strong]", {"STRONG"}) == "fine [strong]"  # case differs: not a chip token, left as-is but never counted

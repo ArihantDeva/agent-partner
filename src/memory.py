@@ -19,8 +19,11 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
+
+_WRITE_LOCK = threading.Lock()   # serializes read-modify-write cycles
 
 HEIMDALL = os.environ.get("HEIMDALL_BIN", "heimdall")
 MEMORIES_DIR = Path(os.environ.get(
@@ -116,10 +119,14 @@ def remember(title: str, body: str, kind: str = "preference") -> bool:
     body = (body or "").strip()
     if not title or not body:
         return False
+    with _WRITE_LOCK:
+        return _remember_locked(title, body, kind)
+
+def _remember_locked(title: str, body: str, kind: str) -> bool:
+    """remember() body; caller holds _WRITE_LOCK."""
     rows = _load()
     prior = [r for r in rows if r.get("title") == title]
     now = _now()
-
     rec = {
         "title": title,
         "body": body,
@@ -133,9 +140,6 @@ def remember(title: str, body: str, kind: str = "preference") -> bool:
 
     if prior:
         cur = max(prior, key=lambda r: r["ts"])
-        if cur["status"] != "active":
-            # correcting an already-superseded/conflicted chain: reopen chain
-            rec["superseded_by"] = None
         if _same_claim(cur["body"], body):
             # reinforcement of same claim
             cur["reinforcements"] += 1
@@ -163,6 +167,11 @@ KINDS = {"identity", "preference", "person", "project", "constraint", "skill", "
 
 def update_fact(title: str, new_body: str, kind: str | None = None) -> bool:
     """Explicit correction: mark chain superseded, write new truth."""
+    with _WRITE_LOCK:
+        return _update_fact_locked(title, new_body, kind)
+
+
+def _update_fact_locked(title: str, new_body: str, kind: str | None) -> bool:
     rows = _load()
     prior = [r for r in rows if r.get("title") == title and r["status"] == "active"]
     now = _now()
@@ -183,6 +192,11 @@ def update_fact(title: str, new_body: str, kind: str | None = None) -> bool:
 
 def forget(title: str) -> bool:
     """Soft-delete whole chain (audit preserved)."""
+    with _WRITE_LOCK:
+        return _forget_locked(title)
+
+
+def _forget_locked(title: str) -> bool:
     rows = _load()
     changed = False
     for r in rows:
@@ -376,6 +390,12 @@ def sleep(days: float = 7, now: int | None = None) -> dict:
     Idempotent: running twice with the same clock changes nothing.
     """
     now = now or _now()
+    with _WRITE_LOCK:
+        return _sleep_locked(days, now)
+
+
+def _sleep_locked(days: float, now: int) -> dict:
+    """sleep() body; caller holds _WRITE_LOCK."""
     rows = _load()
     report = {"merged": 0, "decayed": 0, "promoted": 0}
 
