@@ -58,8 +58,44 @@ def chat(body: ChatIn) -> dict[str, Any]:
 
 @app.post("/sessions/{session_id}/reset")
 def reset(session_id: str) -> dict[str, bool]:
-    get_agent().sessions.pop(session_id, None)
+    """Drop live session AND its persisted history (facts stay).
+    Idempotent: resetting an unknown session also reports success."""
+    agent = get_agent()
+    agent.sessions.pop(session_id, None)
+    import sessions as session_store
+    session_store.drop(session_id)
     return {"reset": True}
+
+
+@app.post("/sleep")
+def run_sleep() -> dict:
+    """Consolidation cycle: merge dupes, decay unused, promote reinforced."""
+    return memory.sleep()
+
+
+@app.get("/stats")
+def stats() -> dict:
+    rows = memory._load()
+    active = [r for r in memory.active_rows()]
+    verdicts: dict[str, int] = {}
+    for r in active:
+        v = memory.verdict_of(r["title"])
+        verdicts[v] = verdicts.get(v, 0) + 1
+    return {
+        "total_records": len(rows),
+        "active_facts": len(active),
+        "verdicts": verdicts,
+        "kinds": sorted({r["kind"] for r in active}),
+        "sessions_live": len(get_agent().sessions),
+    }
+
+
+@app.get("/memories/{title}/history")
+def fact_history(title: str) -> list[dict]:
+    trail = memory.history_of(title)
+    if not trail:
+        raise HTTPException(404, f"no such fact: {title}")
+    return trail
 
 
 @app.get("/memories")

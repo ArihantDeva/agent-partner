@@ -217,8 +217,16 @@ class PartnerAgent:
     def chat(self, session_id: str, message: str) -> dict:
         """One turn. Returns {reply, memories_used, remembered}."""
         from google.genai import types
+        import sessions as session_store
 
-        sess = self.sessions.setdefault(session_id, Session(session_id=session_id))
+        sess = self.sessions.get(session_id)
+        if sess is None:
+            sess = Session(session_id=session_id)
+            persisted = session_store.load(session_id)
+            if persisted:
+                sess.history = [Turn(**t) for t in persisted]
+                sess.briefed = True   # mid-conversation resume: no re-briefing
+            self.sessions[session_id] = sess
 
         # 0. zero-cost fast path
         remembered: list[str] = []
@@ -284,6 +292,11 @@ class PartnerAgent:
         sess.history.append(Turn("user", message))
         sess.history.append(Turn("model", reply_text))
         sess.memories_used = used
+        try:
+            session_store.save(session_id,
+                               [{"role": t.role, "text": t.text} for t in sess.history])
+        except Exception:
+            pass  # persistence is best-effort mid-request; next turn retries
 
         return {"reply": reply_text, "memories_used": used, "remembered": remembered}
 

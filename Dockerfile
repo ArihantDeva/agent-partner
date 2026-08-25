@@ -24,10 +24,12 @@ ENV HEIMDALL_BIN=/app/node_modules/.bin/heimdall
 COPY src/ src/
 COPY memories/ memories/
 
-# Memories persist here; mount a volume to survive restarts
+# Memories AND sessions persist here; mount a volume to survive restarts
 ENV MEMORIES_DIR=/data/memories
-RUN mkdir -p /data/memories
+ENV SESSIONS_DIR=/data/sessions
+RUN mkdir -p /data/memories /data/sessions
 VOLUME /data/memories
+VOLUME /data/sessions
 
 # git identity needed if graft build runs in-container
 RUN git config --global user.email partner@localhost && git config --global user.name partner

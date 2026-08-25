@@ -13,6 +13,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORIES_DIR", str(tmp_path / "mem"))
     monkeypatch.setattr(memory := __import__("memory"), "MEMORIES_DIR", tmp_path / "mem")
     monkeypatch.setattr(memory, "FACTS_FILE", tmp_path / "mem" / "facts.jsonl")
+    import sessions as session_store
+    monkeypatch.setattr(session_store, "SESSIONS_DIR", tmp_path / "sessions")
     # stub agent so tests never call Gemini
     class FakeAgent:
         def __init__(self): self.sessions = {}

@@ -80,6 +80,9 @@ class FakeModels:
 def agent_cls(monkeypatch):
     mem = fresh_memory(monkeypatch)
     import importlib
+    import sessions as session_store
+    monkeypatch.setattr(session_store, "SESSIONS_DIR",
+                        Path(tempfile.mkdtemp()))
     import agent
     importlib.reload(agent)
     yield agent, mem
@@ -201,3 +204,37 @@ class TestRegexFastPath:
         p = make_agent(agent, [])  # no scripted responses: must NOT call LLM for capture
         from agent import looks_like_correction
         assert looks_like_correction("No, I prefer short answers")
+
+
+class TestSessionPersistence:
+    def test_history_survives_agent_recreation(self, agent_cls, monkeypatch):
+        """The restart guarantee: new agent instance resumes persisted history."""
+        agent, mem = agent_cls
+        import sessions as session_store
+        p1 = make_agent(agent, ["first reply"])
+        p1.chat("persist-1", "hello there")
+        # simulate process death: brand-new instance
+        p2 = make_agent(agent, ["second reply"])
+        p2.chat("persist-1", "and again")
+        turns = session_store.load("persist-1")
+        texts = [t["text"] for t in turns]
+        assert "hello there" in texts and "first reply" in texts and "second reply" in texts
+
+    def test_tolerates_corrupt_session_file(self, agent_cls):
+        agent, mem = agent_cls
+        import sessions as session_store
+        p = session_store._path("corrupt-sess")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{torn json")
+        p3 = make_agent(agent, ["ok"])
+        out = p3.chat("corrupt-sess", "hi")
+        assert out["reply"] == "ok"   # degraded gracefully to fresh session
+
+    def test_reset_tombstones_not_deletes(self, agent_cls):
+        agent, mem = agent_cls
+        import sessions as session_store
+        p = make_agent(agent, ["r"])
+        p.chat("tomb-1", "x")
+        session_store.drop("tomb-1")
+        assert not session_store._path("tomb-1").exists()
+        assert session_store._path("tomb-1").with_suffix(".gone").exists()
