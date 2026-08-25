@@ -27,12 +27,17 @@ from model_config import MODEL  # noqa: E402
 
 MAX_TOOL_CALLS = 8
 
+
+def _now_ms() -> int:
+    import time
+    return int(time.time() * 1000)
+
 SYSTEM_BASE = """You are Partner, a collaborative AI that gets better the longer it knows someone.
 
 Rules:
-1. When known facts are provided, USE them. Cite inline as [VERDICT: STRONG] or
-   [VERDICT: WEAK] exactly matching the label given. Never invent a memory.
-   Only cite a chip for facts present in your context this turn.
+1. When known facts are provided, USE them. Cite inline as [STRONG] or
+   [WEAK] exactly matching the label given (bare token, no colons). Never
+   invent a memory. Only cite a chip for facts present in your context this turn.
 2. If a fact is [WEAK], confirm before acting on it ("still prefer X?").
 3. If a fact is [CONFLICTED], show both versions and ask which is true.
 4. If a fact is [STALE], mention it might be outdated.
@@ -214,6 +219,10 @@ class PartnerAgent:
         from google.genai import types
         return types.GenerateContentConfig(temperature=0.3, tools=_TOOL_DECL, **kw)
 
+    def _session_live(self, session_id: str) -> bool:
+        """H4 fix: a reset mid-stream revokes persistence for that turn."""
+        return session_id in self.sessions
+
     def chat_stream(self, session_id: str, message: str):
         """Streaming variant of chat(): yields {event, text?, ...} dicts.
 
@@ -229,12 +238,12 @@ class PartnerAgent:
             persisted = session_store.load(session_id)
             if persisted:
                 sess.history = [Turn(**t) for t in persisted]
-                sess.briefed = True
+                # M2 fix: resumed sessions get the briefing too
             self.sessions[session_id] = sess
 
         remembered: list[str] = []
         if looks_like_correction(message):
-            title = f"fact-{len(sess.history)}"
+            title = f"{session_id}-fact-{len(sess.history)}-{_now_ms()}"
             if memory.remember(title, message.strip(), kind="preference"):
                 remembered.append(message.strip())
 
@@ -272,7 +281,9 @@ class PartnerAgent:
                 contents.append(types.Content(role="user", parts=[types.Part(
                     function_response=types.FunctionResponse(name=fc_name,
                                                              response=result))]))
-                reply_bits = []   # post-tool turn restarts the visible reply
+                # M3 fix: pre-tool text was already streamed to the user — keep
+                # it in the final reply instead of silently discarding it
+
         except Exception as e:
             yield {"event": "error", "text": str(e)}
             return
@@ -280,15 +291,12 @@ class PartnerAgent:
         full = "".join(reply_bits).strip()
         allowed = {h["verdict"] for h in injected}
         full = _validate_chips(full, allowed)
-        used = sorted(set(re.findall(r"\[(STRONG|WEAK)\]", full)))
+        used = sorted({m.group(1).upper() for m in _CHIP_RE.finditer(full)})
         sess.history.append(Turn("user", message))
         sess.history.append(Turn("model", full))
         sess.memories_used = used
-        try:
-            session_store.save(session_id,
-                               [{"role": t.role, "text": t.text} for t in sess.history])
-        except Exception:
-            pass
+        if self._session_live(session_id):
+            _persist(session_store, session_id, sess)
         yield {"event": "done", "reply": full, "memories_used": used,
                "remembered": remembered}
 
@@ -303,13 +311,14 @@ class PartnerAgent:
             persisted = session_store.load(session_id)
             if persisted:
                 sess.history = [Turn(**t) for t in persisted]
-                sess.briefed = True   # mid-conversation resume: no re-briefing
+                # M2 fix: resumed sessions ARE returning users — they get the
+                # welcome-back briefing (that's the kill-demo payoff)
             self.sessions[session_id] = sess
 
         # 0. zero-cost fast path
         remembered: list[str] = []
         if looks_like_correction(message):
-            title = f"fact-{len(sess.history)}"
+            title = f"{session_id}-fact-{len(sess.history)}-{_now_ms()}"
             if memory.remember(title, message.strip(), kind="preference"):
                 remembered.append(message.strip())
 
@@ -365,29 +374,39 @@ class PartnerAgent:
         # 4. chip validation: only chips backed by same-verdict injected facts pass
         allowed = {h["verdict"] for h in injected}
         reply_text = _validate_chips(reply_text, allowed)
-        used = sorted(set(re.findall(r"\[(STRONG|WEAK)\]", reply_text)))
+        used = sorted({m.group(1).upper() for m in _CHIP_RE.finditer(reply_text)})
 
         sess.history.append(Turn("user", message))
         sess.history.append(Turn("model", reply_text))
         sess.memories_used = used
-        try:
-            session_store.save(session_id,
-                               [{"role": t.role, "text": t.text} for t in sess.history])
-        except Exception:
-            pass  # persistence is best-effort mid-request; next turn retries
+        if self._session_live(session_id):
+            _persist(session_store, session_id, sess)
 
         return {"reply": reply_text, "memories_used": used, "remembered": remembered}
 
 
-_CHIP_RE = re.compile(r"\s*\[(STRONG|WEAK)\]")
+_CHIP_RE = re.compile(
+    r"\s*\[\s*(?:VERDICT\s*[:：]?\s*)?(STRONG|WEAK)\s*\]", re.I)
+
+
+def _persist(store, session_id: str, sess: Session) -> None:
+    """Best-effort save; failures logged, never silent."""
+    import sys
+    try:
+        store.save(session_id,
+                   [{"role": t.role, "text": t.text} for t in sess.history])
+    except Exception as e:
+        print(f"[partner] session persist failed for {session_id}: {e}",
+              file=sys.stderr)
 
 
 def _validate_chips(reply: str, allowed_verdicts: set[str]) -> str:
     """Strip any chip whose verdict wasn't earned by an injected fact this turn.
 
+    Case/format-insensitive: [STRONG], [strong], [ VERDICT: STRONG ] all match.
     This is what makes 'the model cannot fake verdicts' literally true:
     enforcement lives in the server, not the prompt.
     """
     def repl(m):
-        return m.group(0) if m.group(1) in allowed_verdicts else ""
+        return m.group(0) if m.group(1).upper() in allowed_verdicts else ""
     return _CHIP_RE.sub(repl, reply)

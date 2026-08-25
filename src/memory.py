@@ -93,6 +93,7 @@ def _load() -> list[dict]:
         r.setdefault("last_used", r.get("ts", now))
         r.setdefault("superseded_by", None)
         r.setdefault("status", "active")
+        r.setdefault("ts", now)   # L4 fix: hand-edited rows must not 500 reads
         rows.append(r)
     return rows
 
@@ -175,13 +176,22 @@ def _update_fact_locked(title: str, new_body: str, kind: str | None) -> bool:
     rows = _load()
     prior = [r for r in rows if r.get("title") == title and r["status"] == "active"]
     now = _now()
+    if not prior:
+        return False
     for r in prior:
         r["status"] = "superseded"
         r["superseded_by"] = f"{title}@{now}"
+    # H2 fix: adjudication resolves the whole conflict chain — conflicting
+    # siblings are closed out too, so the new truth isn't born CONFLICTED
+    resolved = {r["title"] for r in prior}
+    for r in rows:
+        if r.get("conflict_with") in resolved and r["status"] == "active":
+            r["status"] = "resolved-conflict"
+            r["resolved_by"] = f"{title}@{now}"
     rec = {
         "title": title, "body": new_body.strip(),
-        "kind": kind or (prior[0]["kind"] if prior else "preference"),
-        "ts": now, "reinforcements": prior[0]["reinforcements"] if prior else 0,
+        "kind": kind if kind in KINDS else prior[0]["kind"],
+        "ts": now, "reinforcements": prior[0]["reinforcements"],
         "last_used": now, "superseded_by": None, "status": "active",
         "supersedes": title,
     }
@@ -219,15 +229,30 @@ def _same_claim(a: str, b: str) -> bool:
 
 _CONTRADICT_VERBS = re.compile(
     r"\b(?:actually|instead|no[,.!]|not anymore|moved|switched|changed to|now use|exclusively)\b", re.I)
+_NEGATION_RE = re.compile(r"\b(?:not|never|don'?t|stopped|quit|no longer)\b", re.I)
 
 
 def _contradicts(old: str, new: str) -> bool:
-    """Heuristic: low lexical agreement + correction marker in new text."""
+    """Heuristic for genuine corrections vs topic shifts.
+
+    Conflict requires a correction marker AND one of:
+    - shared subject matter (0.15 <= jaccard < 0.45), or
+    - an explicit negation flip ("I don't drink coffee" vs "I drink coffee")
+    M4 fix: generic titles across unrelated topics no longer fuse into fake
+    conflicts; negation flips still caught even at zero lexical overlap.
+    """
     ta, tb = _terms(old), _terms(new)
     if not ta or not tb:
         return False
+    if not _CONTRADICT_VERBS.search(new) and not _NEGATION_RE.search(new):
+        return False
     jaccard = len(ta & tb) / len(ta | tb)
-    return jaccard < 0.4 and bool(_CONTRADICT_VERBS.search(new))
+    if 0.15 <= jaccard < 0.45:
+        return True
+    # zero-overlap but same predicate frame (use X daily → switched to Y
+    # exclusively): both sides name an editor/tool/thing after use/prefer verb
+    _PRED = re.compile(r"\b(?:use|using|prefer|switched to|moved to|drink|write)\b", re.I)
+    return bool(_PRED.search(old) and _PRED.search(new))
 
 
 # ---------------------------------------------------------------------------
@@ -281,12 +306,11 @@ def verdict_of(title: str, now: int | None = None) -> str:
         return "SUPERSEDED"
     cur = max(active, key=lambda r: r["ts"])
 
-    # any active row anywhere pointing at this chain (or within it) conflicts
+    # any ACTIVE row pointing at this chain conflicts (resolved siblings are
+    # status='resolved-conflict' and no longer count — H2 fix)
     all_rows = _load()
-    if any(r.get("conflict_with") == title for r in all_rows):
-        return "CONFLICTED"
-    if len({r.get("conflict_with") for r in active if r.get("conflict_with")}) >= 1 \
-            and len(active) > 1:
+    if any(r.get("conflict_with") == title for r in all_rows
+           if r.get("status") == "active"):
         return "CONFLICTED"
 
     if cur["kind"] not in IDENTITY_KINDS:
@@ -317,7 +341,7 @@ def recall(query: str, n: int = 4, now: int | None = None) -> list[dict]:
             continue          # recall is relevance search, not a dump
         fresh = 1.0 if (now - r["ts"]) < RECENCY_S else 0.3
         rein = min(r.get("reinforcements", 0), 3) * 0.25
-        penalty = -0.6 if v == "STALE" else (-0.4 if v == "WEAK" else 0.0)
+        penalty = {"STALE": -0.6, "WEAK": -0.4, "CONFLICTED": -0.5}.get(v, 0.0)
         score = overlap * 2 + fresh * 0.5 + rein + penalty
         scored.append({
             "verdict": v,

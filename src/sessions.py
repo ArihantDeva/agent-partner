@@ -17,8 +17,13 @@ SESSIONS_DIR = Path(os.environ.get(
 
 
 def _path(session_id: str) -> Path:
-    safe = "".join(c for c in session_id if c.isalnum() or c in "-_")[:80]
-    return SESSIONS_DIR / f"{safe or 'default'}.json"
+    """Collision-free filename: readable prefix + short content hash.
+    'a b' and 'a/b' map to DIFFERENT files (no cross-session bleed)."""
+    import hashlib
+    safe = "".join(c for c in session_id if c.isalnum() and c.isascii() or c in "-_")[:40]
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
+    name = f"{safe or 's'}-{digest}.json"
+    return SESSIONS_DIR / name
 
 
 def load(session_id: str) -> list[dict] | None:
@@ -33,9 +38,10 @@ def load(session_id: str) -> list[dict] | None:
 
 
 def save(session_id: str, turns: list[dict]) -> None:
-    """Atomic write: tmp + os.replace."""
+    """Atomic write: unique tmp + os.replace (M5: per-call tmp, no clobber)."""
+    import uuid
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _path(session_id).with_suffix(".tmp")
+    tmp = _path(session_id).with_suffix(f".{uuid.uuid4().hex[:8]}.tmp")
     payload = json.dumps({"session_id": session_id, "saved_at": int(time.time()),
                           "turns": turns[-40:]})
     tmp.write_text(payload)

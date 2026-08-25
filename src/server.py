@@ -58,8 +58,10 @@ def chat(body: ChatIn) -> dict[str, Any]:
         raise HTTPException(422, "message too long (max 8000 chars)")
     try:
         return get_agent().chat(body.session_id, body.message)
-    except Exception as e:  # surface provider errors cleanly
-        raise HTTPException(502, f"upstream error: {e}") from e
+    except Exception as e:
+        # L2 fix: log full detail server-side; client gets a generic message
+        print(f"[partner] chat upstream error: {e}")
+        raise HTTPException(502, "upstream model error") from e
 
 
 @app.post("/chat/stream")

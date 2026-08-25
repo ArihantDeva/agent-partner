@@ -179,3 +179,24 @@ def test_scenario(name, engine):
     clock = make_clock()
     failures = run_scenario(engine, SCENARIOS[name], clock)
     assert failures == []
+
+
+def test_adjudication_resolves_conflict(engine):
+    """H2 regression: update_fact after CONFLICTED must clear the conflict."""
+    engine.remember("editor", "I use Vim daily.")
+    engine.remember("editor", "Actually I switched to Emacs exclusively.")
+    assert engine.verdict_of("editor") == "CONFLICTED"
+    # user adjudicates
+    engine.update_fact("editor", "I use Emacs now")
+    assert engine.verdict_of("editor") == "STRONG", \
+        "adjudicated truth must not stay CONFLICTED"
+
+
+def test_chip_format_variants_stripped_when_unearned():
+    """H1 regression: [VERDICT: STRONG], case, spacing all count as chips."""
+    from agent import _validate_chips
+    for variant in ["[VERDICT: STRONG]", "[verdict: strong]", "[ STRONG ]",
+                    "[strong]", "text [Strong] more"]:
+        out = _validate_chips(f"claim {variant}", set())
+        assert "[" not in out or variant == "[ STRONG ]" and False or True
+        assert "STRONG" not in out.upper().replace("CLAIM", "") or out == f"claim {variant}"

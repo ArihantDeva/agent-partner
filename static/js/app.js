@@ -96,7 +96,7 @@ async function send(text) {
 }
 
 /* ---------- brain sidebar ---------- */
-const VERDICT_ORDER = { STRONG: 0, WEAK: 1, CONFLICTED: 2, STALE: 3 };
+const VERDICT_ORDER = { STRONG: 0, WEAK: 1, CONFLICTED: 2, STALE: 3, SUPERSEDED: 4, UNKNOWN: 5 };
 
 async function refreshBrain() {
   try {
