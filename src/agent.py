@@ -301,7 +301,12 @@ class PartnerAgent:
                 result = self._run_tools(sess, func_call, injected)
                 fc_name = (func_call["name"] if isinstance(func_call, dict)
                            else func_call.name)
-                contents.append(cand.content if cand else types.Content(role="model", parts=[]))
+                # Vertex strictness: exact call-part / response-part pairing
+                fc_part = types.Part(function_call=(
+                    func_call if not isinstance(func_call, dict) else
+                    types.FunctionCall(name=func_call["name"],
+                                       args=dict(func_call.get("args", {})))))
+                contents.append(types.Content(role="model", parts=[fc_part]))
                 contents.append(types.Content(role="user", parts=[types.Part(
                     function_response=types.FunctionResponse(name=fc_name,
                                                              response=result))]))
@@ -392,7 +397,13 @@ class PartnerAgent:
                        else dict(func_call.args or {}))
             if func_call_name == "remember":
                 tool_writes.append(str(fc_args.get("body", "")))
-            contents.append(cand.content)
+            # Vertex strictness: model turn must contain exactly the function
+            # call part(s); response turn exactly one functionResponse per call.
+            fc_part = types.Part(function_call=(
+                func_call if not isinstance(func_call, dict) else
+                types.FunctionCall(name=func_call["name"],
+                                   args=dict(func_call.get("args", {})))))
+            contents.append(types.Content(role="model", parts=[fc_part]))
             contents.append(types.Content(
                 role="user",
                 parts=[types.Part(
