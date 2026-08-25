@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partner — the agent that never forgets</title>
+<link rel="stylesheet" href="https://fonts.bunny.net/css?family=inter:400,500,700&display=swap">
+<link rel="stylesheet" href="/css/radix.css">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◆</span>
+      <div>
+        <h1>Partner</h1>
+        <p class="tagline">adapts across sessions — memory is infrastructure</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="conn-dot" class="dot dot-live" title="server connection"></span>
+      <button id="btn-sleep" class="btn btn-ghost" title="Run a consolidation cycle">🌙 Sleep</button>
+      <button id="btn-kill" class="btn btn-danger" title="Kill the serving process. Memory survives.">
+        ⚡ Kill the process
+      </button>
+      <a href="/memories" target="_blank" class="btn btn-ghost" title="Raw JSON audit">/memories ↗</a>
+    </div>
+  </header>
+
+  <main class="layout">
+
+    <!-- chat column -->
+    <section class="chat-col">
+      <div id="chat-log" class="chat-log" aria-live="polite"></div>
+
+      <div id="briefing-card" class="briefing hidden"></div>
+
+      <form id="chat-form" class="composer" autocomplete="off">
+        <input id="chat-input" type="text" placeholder="Teach Partner something about you, or ask what it remembers…"
+               maxlength="2000" autocomplete="off">
+        <button type="submit" class="btn btn-primary" id="btn-send">Send</button>
+      </form>
+      <p class="hint">Try: “No, I prefer answers as bullet lists.” → then <b>Kill the process</b> → ask what it remembers.</p>
+    </section>
+
+    <!-- brain sidebar -->
+    <aside class="brain-col">
+      <h2 class="col-title">Live brain</h2>
+      <p class="brain-sub">facts learned this conversation &amp; recalled ones</p>
+      <ul id="fact-list" class="fact-list"></ul>
+      <template id="tpl-fact">
+        <li class="fact">
+          <div class="fact-head">
+            <span class="chip chip-strong">STRONG</span>
+            <span class="fact-kind">preference</span>
+          </div>
+          <p class="fact-body"></p>
+          <details class="receipt"><summary>source</summary><blockquote></blockquote></details>
+        </li>
+      </template>
+    </aside>
+
+  </main>
+
+  <!-- memory inspector drawer -->
+  <section id="inspector" class="inspector hidden">
+    <div class="inspector-head">
+      <h2>Memory inspector</h2>
+      <div class="inspector-tools">
+        <select id="filter-verdict">
+          <option value="">all verdicts</option>
+          <option value="STRONG">STRONG</option>
+          <option value="WEAK">WEAK</option>
+          <option value="CONFLICTED">CONFLICTED</option>
+          <option value="STALE">STALE</option>
+        </select>
+        <button id="btn-inspect-close" class="btn btn-ghost">✕ close</button>
+      </div>
+    </div>
+    <table class="inspector-table">
+      <thead><tr><th>verdict</th><th>kind</th><th>title</th><th>fact</th><th>updated</th><th></th></tr></thead>
+      <tbody id="inspector-rows"></tbody>
+    </table>
+  </section>
+
+  <footer class="statusbar">
+    <span id="stat-facts">0 facts</span> ·
+    <span id="stat-verdicts">—</span> ·
+    <button id="btn-inspector" class="linklike">open inspector</button>
+    <span class="spacer"></span>
+    <span>Gemini · GenAI SDK · Cloud Run</span>
+  </footer>
+</div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

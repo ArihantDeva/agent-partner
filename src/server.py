@@ -1,13 +1,19 @@
 """HTTP wrapper for Cloud Run. Endpoints:
 - GET  /healthz          liveness (touches neither memory nor LLM)
 - POST /chat             {session_id, message} -> {reply, memories_used, remembered}
-- POST /sessions/{id}/reset   drop in-memory history (facts persist)
+- POST /chat/stream      same but SSE token stream
 - GET  /memories         current fact list (debug/transparency for judges)
+- GET  /memories/{t}/history   audit trail for one fact
+- POST /sessions/{id}/reset   drop in-memory + persisted history (facts persist)
+- POST /sleep            consolidation cycle (merge dupes, decay, promote)
+- GET  /stats             verdict/kind/session counts
+- GET  /                  web UI
 """
 from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -67,6 +73,22 @@ def reset(session_id: str) -> dict[str, bool]:
     return {"reset": True}
 
 
+@app.post("/demo/kill")
+def demo_kill() -> dict:
+    """Demo endpoint: kill our own serving process.
+
+    Local/docker: `docker rm -f` from inside is not permitted, so we exit —
+    with restart=always (or Cloud Run min-instances) the platform revives us.
+    The UI polls /healthz until the fresh process answers.
+    """
+    import threading
+
+    def _die():
+        os._exit(0)          # hard exit: no cleanup handlers, looks like a crash
+    threading.Timer(0.3, _die).start()
+    return {"killing": True}
+
+
 @app.post("/sleep")
 def run_sleep() -> dict:
     """Consolidation cycle: merge dupes, decay unused, promote reinforced."""
@@ -101,6 +123,14 @@ def fact_history(title: str) -> list[dict]:
 @app.get("/memories")
 def memories() -> list[dict]:
     return memory._facts()
+
+
+# --- static UI -------------------------------------------------------------
+from fastapi.staticfiles import StaticFiles
+
+_STATIC = Path(__file__).resolve().parent.parent / "static"
+if _STATIC.exists():
+    app.mount("/", StaticFiles(directory=_STATIC, html=True), name="ui")
 
 
 if __name__ == "__main__":

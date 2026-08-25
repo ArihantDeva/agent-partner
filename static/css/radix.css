@@ -1,0 +1,10 @@
+/* Radix Colors dark scales (subset), MIT — https://radix-ui.com/colors
+   Only the tokens app.css consumes; keeps a single local file, no CDN. */
+:root {
+  --slate-1: #101828; --slate-3: #1c2434; --slate-6: #2a3243;
+  --slate-9: #8b8d98; --slate-12: #eceef1;
+  --indigo-9: #3e63dd;
+  --jade-9: #30a46c;
+  --orange-9: #f76b15;
+  --red-9: #e5484d;
+}
