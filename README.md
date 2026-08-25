@@ -22,6 +22,8 @@ its full revision history, nothing is ever deleted).
 
 ## The demo beat (why this wins)
 
+![Live demo: teach → kill the process → memory survives](docs/img/demo.gif)
+
 ```
 You:  No, I prefer answers as bullet lists.
 AI:   Noted. (fact written, chip pops into the live-brain sidebar)
