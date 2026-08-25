@@ -1,7 +1,11 @@
 # Partner — the collaborative agent that never forgets you
 
 **Track:** Collaborative Partner (All Things Agentic Hackathon)
-**Stack:** Gemini 3.5 Flash · Google GenAI SDK · Cloud Run · file-backed memory engine
+**Stack:** Gemini (Google GenAI SDK) · Cloud Run · crash-safe memory engine
+Deployed model: `gemini-2.5-flash` via Vertex endpoint — this GCP org blocks
+Developer-API keys (`API_KEY_SERVICE_BLOCKED`), so production runs on Vertex
+with service-identity auth; the SDK call path is identical. Flip
+`GEMINI_MODEL`/auth env when a clean key project is available.
 
 Partner is a chat agent that **adapts to you across sessions**. Correct it once
 and it remembers — with receipts. Every recalled fact carries a computed,
@@ -68,8 +72,12 @@ Browser ──SSE──▶ FastAPI on Cloud Run ──▶ Gemini 3.5 Flash (GenA
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 
+# Local (Developer API):
 export GEMINI_API_KEY=...        # from aistudio.google.com/apikey
-export GEMINI_MODEL=gemini-3.5-flash   # hackathon-required model
+export GEMINI_MODEL=gemini-2.5-flash
+
+# Or Vertex mode (what our Cloud Run uses):
+export USE_VERTEX=1 GOOGLE_CLOUD_PROJECT=<proj> GOOGLE_CLOUD_LOCATION=us-central1
 
 python src/server.py             # serves UI + API on :8080
 ```
@@ -92,8 +100,12 @@ Or with mise: `mise run test` · `mise run dev`.
 ```bash
 gcloud run deploy partner \
   --source . --region us-central1 --allow-unauthenticated \
-  --min-instances=1 --max-instances=2 \
-  --set-env-vars GEMINI_MODEL=gemini-3.5-flash,GEMINI_API_KEY=...
+  --min-instances=1 --max-instances=1 \
+  --set-env-vars USE_VERTEX=1,GOOGLE_CLOUD_PROJECT=<proj>,GOOGLE_CLOUD_LOCATION=us-central1,GEMINI_MODEL=gemini-2.5-flash \
+  --add-volume name=mem,type=cloud-storage,bucket=<mem-bucket> \
+  --add-volume name=sess,type=cloud-storage,bucket=<sess-bucket> \
+  --add-volume-mount volume=mem,mount-path=/data/memories \
+  --add-volume-mount volume=sess,mount-path=/data/sessions
 ```
 
 Memory volume persists per instance via `/data/memories`; sessions likewise.

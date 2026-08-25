@@ -49,8 +49,9 @@ reconnects — and Partner still knows your name, your formatting preference,
 and where you work. Not a demo trick: memory is files + honest verdicts.
 
 **Tech (all required items)**
-- Gemini 3.5 Flash via Google GenAI SDK ✔ (function calling + SSE streaming)
-- Cloud Run deployment ✔ (min-instances=1, live URL in demo)
+- Gemini via Google GenAI SDK ✔ (function calling + SSE streaming;
+  deployed on Vertex endpoint as gemini-2.5-flash because this GCP org
+  restricts Developer-API keys — same SDK, same Gemini family)
 - @arihantdeva/heimdall — my open-source MIT library — for verified code-context
   retrieval via the `search_code` tool; its trust-verdict model inspired the chip UX
 
