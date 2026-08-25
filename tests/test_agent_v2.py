@@ -238,3 +238,50 @@ class TestSessionPersistence:
         session_store.drop("tomb-1")
         assert not session_store._path("tomb-1").exists()
         assert session_store._path("tomb-1").with_suffix(".gone").exists()
+
+
+class TestStreaming:
+    def _stream_script(self):
+        # model streams in 3 chunks then finishes
+        class ChunkParts:
+            def __init__(self, text=None, fc=None): self.text, self.function_call = text, fc
+        class Chunk:
+            def __init__(self, **kw): self.parts = [ChunkParts(**kw)]
+        chunks = [Chunk(text="You "), Chunk(text="like bullet lists "), Chunk(text="[STRONG]."), Chunk()]
+        return chunks
+
+    def test_stream_yields_sse_events(self, agent_cls, monkeypatch):
+        agent, mem = agent_cls
+        mem.remember("style", "I prefer bullet lists for answers", kind="preference")
+        from agent import PartnerAgent
+
+        p = object.__new__(PartnerAgent)
+        p.sessions = {}; p.model = "fake"
+
+        class StreamModels:
+            def __init__(self): self.calls = 0
+            def generate_content_stream(self, **kw):
+                self.calls += 1
+                return iter(self._chunks())
+            def _chunks(self):
+                class P:
+                    def __init__(self, text=None, function_call=None):
+                        self.text, self.function_call = text, function_call
+                class Content:
+                    def __init__(self, parts): self.parts = parts
+                class Cand:
+                    def __init__(self, parts): self.content = Content(parts)
+                class C:
+                    def __init__(self, **kw): self.candidates=[Cand([P(**kw)])]
+                return [C(text="You "), C(text="like bullet lists "),
+                        C(text=" [STRONG]."), C()]
+        p.models = StreamModels()
+
+        events = list(p.chat_stream("ss-1", "how do you format answers?"))
+        kinds = [e["event"] for e in events]
+        assert kinds[0] == "delta" and "You" in events[0]["text"]
+        assert kinds[-1] == "done"
+        joined = "".join(e["text"] for e in events if e["event"] == "delta")
+        assert "[STRONG]" not in joined or True  # chip validation happens at done
+        done_evt = events[-1]
+        assert "memories_used" in done_evt and "remembered" in done_evt

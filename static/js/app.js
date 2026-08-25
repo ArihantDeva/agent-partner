@@ -51,21 +51,46 @@ function addMsg(role, text, metas) {
 
 async function send(text) {
   addMsg("user", text);
-  const thinking = addMsg("bot", "…");
+  const div = addMsg("bot", "");
+  const earned = new Set();
   try {
-    const r = await fetch("/chat", {
+    const r = await fetch("/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: state.sessionId, message: text }),
     });
-    if (!r.ok) throw new Error(await r.text());
-    const data = await r.json();
-    thinking.remove();
-    addMsg("bot", data.reply, data);
-    data.remembered.forEach(() => refreshBrain());
-    refreshBrain();
+    if (!r.ok || !r.body) throw new Error("stream unavailable (" + r.status + ")");
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", full = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const raw = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        if (!raw.startsWith("data: ")) continue;
+        const evt = JSON.parse(raw.slice(6));
+        if (evt.event === "delta") {
+          full += evt.text;
+          div.innerHTML = "";
+          div.appendChild(renderVerdictsIn(full, null));
+          $("#chat-log").scrollTop = $("#chat-log").scrollHeight;
+        } else if (evt.event === "done") {
+          evt.memories_used.forEach((v) => earned.add(v));
+          div.innerHTML = "";
+          div.appendChild(renderVerdictsIn(evt.reply, earned));
+          (evt.remembered || []).forEach(() => refreshBrain());
+          refreshBrain();
+        } else if (evt.event === "error") {
+          div.appendChild(document.createTextNode("⚠️ " + evt.text));
+        }
+      }
+    }
   } catch (e) {
-    thinking.innerHTML = "";
+    div.innerHTML = "";
     addMsg("bot", "⚠️ " + e.message);
   }
 }

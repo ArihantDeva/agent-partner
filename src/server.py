@@ -62,6 +62,29 @@ def chat(body: ChatIn) -> dict[str, Any]:
         raise HTTPException(502, f"upstream error: {e}") from e
 
 
+@app.post("/chat/stream")
+def chat_stream(body: ChatIn):
+    """SSE stream of {delta|done|error} events. No proxy buffering."""
+    import json as _json
+    from fastapi.responses import StreamingResponse
+
+    if not body.message.strip():
+        raise HTTPException(422, "message must not be empty")
+    if len(body.message) > 8000:
+        raise HTTPException(422, "message too long (max 8000 chars)")
+
+    def gen():
+        try:
+            for evt in get_agent().chat_stream(body.session_id, body.message):
+                yield f"data: {_json.dumps(evt)}\n\n"
+        except Exception as e:
+            yield f"data: {_json.dumps({'event': 'error', 'text': str(e)})}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
 @app.post("/sessions/{session_id}/reset")
 def reset(session_id: str) -> dict[str, bool]:
     """Drop live session AND its persisted history (facts stay).

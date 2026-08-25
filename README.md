@@ -1,52 +1,65 @@
-# Partner — a Collaborative Partner that never forgets
+# Partner — the collaborative agent that never forgets you
 
 **Track:** Collaborative Partner (All Things Agentic Hackathon)
-**Stack:** Gemini 3.5 Flash · Google GenAI SDK · Cloud Run · Heimdall memory layer
+**Stack:** Gemini 3.5 Flash · Google GenAI SDK · Cloud Run · file-backed memory engine
 
 Partner is a chat agent that **adapts to you across sessions**. Correct it once
-and it remembers — with receipts. Every recalled fact carries an honest verdict:
+and it remembers — with receipts. Every recalled fact carries a computed,
+honest verdict:
 
-- `[STRONG]` — multiple matching signals, or a fresh preference: act on it.
-- `[WEAK]` — single fuzzy match: the agent confirms before acting.
+- `[STRONG]` — multiple signals or a confident preference: act on it.
+- `[WEAK]` — single fuzzy or hedged signal: the agent confirms before acting.
+- `[CONFLICTED]` — contradictory facts on record: both sides surfaced, user adjudicates.
+- `[STALE]` — unused for 45+ days: mentioned as possibly outdated.
 
-Kill the process, come back tomorrow, and it still knows you — because memory
-lives in a persistent store, not in the chat window.
+Kill the process, come back tomorrow, and it still knows you — memory lives in
+append-only files, not in the chat window.
 
 ## The demo beat (why this wins)
 
 ```
 You:  No, I prefer answers as bullet lists.
-AI:   Noted. *(fact written)*
+AI:   Noted. (fact written, chip pops into the live-brain sidebar)
 
-# ... container killed, new session ...
+# ... click "⚡ Kill the process" in the page: container dies, dot goes red ...
+# ... platform restarts it; UI reconnects ...
 
 You:  What format do you use for answers to me?
 AI:   • I format my responses using bullet lists [STRONG] based on your preference.
 ```
 
-No re-teaching. No hallucinated memory. Verdicts you can audit at `GET /memories`.
+No re-teaching. No hallucinated confidence. Verdicts are **enforced in the
+server**: any `[STRONG]`/`[WEAK]` chip the model emits without a matching fact
+injected that turn is stripped before you ever see it.
 
 ## Architecture
 
 ```
-Browser/curl ──▶ FastAPI on Cloud Run ──▶ Gemini 3.5 Flash (GenAI SDK)
-                        │                        ▲
-                 correction detector            │ system prompt w/ fact block
-                        │ writes                │ cites [STRONG]/[WEAK]
-                        ▼                        │
-              memories/facts.jsonl ──recall──────┘
-              (volume-mounted, survives restarts)
-
-              heimdall search ──▶ verified code-context hits [STRONG/WEAK]
-                                  for repo questions (optional tier)
+Browser ──SSE──▶ FastAPI on Cloud Run ──▶ Gemini 3.5 Flash (GenAI SDK)
+   │                     │    ▲                  │ function calling:
+   │      live-brain     │    │ system prompt    │ remember / recall /
+   │      sidebar ◀──────┘    │ w/ fact block    │ update_fact / forget /
+   │                          │ cites chips      │ search_code
+   │                          │                  ▼
+   └─ Kill button ──▶ os._exit ── platform restart
+                                     │
+        memories/facts.jsonl ◀──recall┘  (append-only audit trail)
+        sessions/*.json       (chat history survives restarts too)
 ```
 
-- **Correction detector**: regex gate catches "no, I prefer…", "call me…",
-  "I work at…" — zero LLM cost to decide what's durable.
-- **Verdicts are computed, not claimed**: ≥2 term overlap or fresh preference →
-  STRONG; single fuzzy term → WEAK. The agent can only cite what the store gave it.
-- **Heimdall** (`@arihantdeva/heimdall`) provides verified repo-context search;
-  its trust-verdict model inspired the fact-chip UX.
+- **Two-stage capture** — regex fast path (zero LLM cost) + model-driven
+  `remember` tool calls + structured-output extractor fallback for durable
+  statements no regex catches ("my sister Sarah's birthday is in May").
+- **Typed facts with receipts** — identity/preference/person/project/
+  constraint/skill/note; every fact keeps its source utterance + timestamp.
+- **Versioned truth** — corrections supersede; nothing is deleted; full audit
+  trail at `GET /memories/{title}/history`.
+- **Verdicts are computed** — signal strength + recency + reinforcement;
+  `sleep()` consolidates: merges near-dupes, decays unused facts toward STALE,
+  promotes reinforced WEAK→STRONG. Identity facts never decay below STRONG.
+- **Agentic loop** — native Gemini function calling, bounded at 8 tool
+  calls/turn; welcome-back briefing summarizes what Partner remembers when you
+  return.
 
 ## Run locally
 
@@ -55,40 +68,63 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 
 export GEMINI_API_KEY=...        # from aistudio.google.com/apikey
-export GEMINI_MODEL=gemini-3.5-flash   # required by hackathon rules; dev tip: gemini-3.6-flash has a bigger free tier
+export GEMINI_MODEL=gemini-3.5-flash   # hackathon-required model
 
-python src/server.py             # serves on :8080
+python src/server.py             # serves UI + API on :8080
 ```
 
-Chat:
+Open http://localhost:8080. Or via curl:
 
 ```bash
 curl -s localhost:8080/chat -H 'Content-Type: application/json' \
   -d '{"session_id":"me","message":"No, I prefer short answers."}'
-# → {"reply":"Noted...","memories_used":[],"remembered":["No, I prefer short answers."]}
 
-curl -s localhost:8080/memories | jq     # inspect everything it knows about you
+curl -s localhost:8080/memories | python3 -m json.tool   # full transparency
+curl -s -N localhost:8080/chat/stream -H 'Content-Type: application/json' \  # SSE
+  -d '{"session_id":"me","message":"hello"}'
 ```
+
+Or with mise: `mise run test` · `mise run dev`.
 
 ## Deploy (Cloud Run)
 
 ```bash
 gcloud run deploy partner \
-  --source . --region us-central1 --allow-unauthenticated --max-instances 2
+  --source . --region us-central1 --allow-unauthenticated \
+  --min-instances=1 --max-instances=2 \
+  --set-env-vars GEMINI_MODEL=gemini-3.5-flash,GEMINI_API_KEY=...
 ```
 
-Scale-to-zero; memory volume persists per instance via `/data/memories`.
-See `docs/demo-script.md` for the exact video beats incl. GCP-console proof.
+Memory volume persists per instance via `/data/memories`; sessions likewise.
+The kill-button works on Cloud Run too: the process exits, Cloud Run replaces
+the instance, the page reconnects, and the fact store survives.
+
+## Tests & evals
+
+```bash
+mise run test        # or: python -m pytest -q
+```
+
+- Unit tests: verdict honesty, capture paths, persistence, HTTP contract.
+- **12 scripted eval journeys** (`tests/test_scenarios.py`): teach→restart→recall,
+  correction→supersession, conflict flagging, unbacked-chip stripping,
+  sleep consolidation effects (decay/promote/merge), receipts, identity immortality.
+- CI (GitHub Actions): hermetic suite + docker build + `/healthz` smoke.
 
 ## Disclosure
 
-Memory layer: [@arihantdeva/heimdall](https://github.com/ArihantDeva/heimdall) —
-my open-source library (MIT), used here for verified code-context retrieval and
-as the inspiration for the verdict-chip interaction. Everything else in this
-repo was built during the hackathon window.
+Memory-layer inspiration and code-context tier: [@arihantdeva/heimdall](https://github.com/ArihantDeva/heimdall) —
+my open-source library (MIT), used here for verified repo-context retrieval
+(`search_code` tool). Everything else in this repo was built during the
+hackathon window.
 
-## Tests
+## Known limits (honesty section)
 
-```bash
-python -m pytest tests -q       # 25 tests: memory verdict honesty, agent loop, HTTP contract
-```
+- Verdict computation is lexical/heuristic (stemmed term overlap, recency,
+  reinforcement counts) — not embeddings yet; recall quality degrades on
+  paraphrase-heavy fact stores.
+- The extractor fallback costs one extra LLM call only when neither regex nor
+  the model wrote a fact; latency-conscious users see it as a slightly slower
+  first reply.
+- Multi-instance Cloud Run would split session files across instances; deploy
+  with min-instances=1 (as documented) to keep state coherent.

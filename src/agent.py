@@ -214,6 +214,84 @@ class PartnerAgent:
         from google.genai import types
         return types.GenerateContentConfig(temperature=0.3, tools=_TOOL_DECL, **kw)
 
+    def chat_stream(self, session_id: str, message: str):
+        """Streaming variant of chat(): yields {event, text?, ...} dicts.
+
+        events: delta (token chunk), done (final payload incl. chip-validated
+        full reply), error. Same capture + validation semantics as chat().
+        """
+        from google.genai import types
+        import sessions as session_store
+
+        sess = self.sessions.get(session_id)
+        if sess is None:
+            sess = Session(session_id=session_id)
+            persisted = session_store.load(session_id)
+            if persisted:
+                sess.history = [Turn(**t) for t in persisted]
+                sess.briefed = True
+            self.sessions[session_id] = sess
+
+        remembered: list[str] = []
+        if looks_like_correction(message):
+            title = f"fact-{len(sess.history)}"
+            if memory.remember(title, message.strip(), kind="preference"):
+                remembered.append(message.strip())
+
+        system, injected = self._system_prompt(message, sess)
+        contents = [types.Content(role="user" if t.role == "user" else "model",
+                                  parts=[types.Part(text=t.text)])
+                    for t in sess.history[-20:]]
+        contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
+        config = types.GenerateContentConfig(
+            system_instruction=system, temperature=0.3, tools=_TOOL_DECL)
+
+        reply_bits: list[str] = []
+        try:
+            for _ in range(MAX_TOOL_CALLS + 1):
+                stream = self.models.generate_content_stream(
+                    model=self.model, contents=contents, config=config)
+                func_call = None
+                for chunk in stream:
+                    cand = chunk.candidates[0] if getattr(chunk, "candidates", None) else None
+                    parts = cand.content.parts if cand and getattr(cand, "content", None) else []
+                    for part in (parts or []):
+                        t = getattr(part, "text", None)
+                        fc = getattr(part, "function_call", None)
+                        if isinstance(t, str) and t and not fc:
+                            reply_bits.append(t)
+                            yield {"event": "delta", "text": t}
+                        if fc:
+                            func_call = fc
+                if func_call is None:
+                    break
+                result = self._run_tools(sess, func_call, injected)
+                fc_name = (func_call["name"] if isinstance(func_call, dict)
+                           else func_call.name)
+                contents.append(cand.content if cand else types.Content(role="model", parts=[]))
+                contents.append(types.Content(role="user", parts=[types.Part(
+                    function_response=types.FunctionResponse(name=fc_name,
+                                                             response=result))]))
+                reply_bits = []   # post-tool turn restarts the visible reply
+        except Exception as e:
+            yield {"event": "error", "text": str(e)}
+            return
+
+        full = "".join(reply_bits).strip()
+        allowed = {h["verdict"] for h in injected}
+        full = _validate_chips(full, allowed)
+        used = sorted(set(re.findall(r"\[(STRONG|WEAK)\]", full)))
+        sess.history.append(Turn("user", message))
+        sess.history.append(Turn("model", full))
+        sess.memories_used = used
+        try:
+            session_store.save(session_id,
+                               [{"role": t.role, "text": t.text} for t in sess.history])
+        except Exception:
+            pass
+        yield {"event": "done", "reply": full, "memories_used": used,
+               "remembered": remembered}
+
     def chat(self, session_id: str, message: str) -> dict:
         """One turn. Returns {reply, memories_used, remembered}."""
         from google.genai import types

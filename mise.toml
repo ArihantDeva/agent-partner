@@ -1,0 +1,20 @@
+# Partner — pinned toolchain + project automation
+[tools]
+python = "3.12"
+
+[tasks.test]
+description = "Full test suite (unit + eval journeys)"
+run = """
+cd ~/Repos/agent-partner
+[ -d .venv ] || python3 -m venv .venv
+. .venv/bin/activate
+python -m pytest -q
+"""
+
+[tasks.dev]
+description = "Serve UI + API on :8080"
+run = """
+cd ~/Repos/agent-partner
+. .venv/bin/activate
+python src/server.py
+"""
