@@ -22,6 +22,7 @@ ENV HEIMDALL_BIN=/app/node_modules/.bin/heimdall
 
 # App
 COPY src/ src/
+COPY static/ static/
 COPY memories/ memories/
 
 # Memories AND sessions persist here; mount a volume to survive restarts

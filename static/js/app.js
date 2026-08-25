@@ -155,7 +155,7 @@ $("#btn-kill").addEventListener("click", async () => {
 
   const poll = setInterval(async () => {
     try {
-      const r = await fetch("/healthz", { cache: "no-store" });
+      const r = await fetch("/health", { cache: "no-store" });
       if (r.ok) {
         clearInterval(poll);
         const secs = ((Date.now() - t0) / 1000).toFixed(1);

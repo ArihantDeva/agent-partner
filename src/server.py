@@ -45,9 +45,14 @@ class ChatOut(BaseModel):
     remembered: list[str]
 
 
-@app.get("/healthz")
-def healthz() -> dict[str, str]:
+def _health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/healthz")           # local use; Cloud Run GFE reserves this path
+@app.get("/health")            # deploy-safe alias
+def healthz() -> dict[str, str]:
+    return _health()
 
 
 @app.post("/chat", response_model=ChatOut)

@@ -58,3 +58,8 @@ def test_reset(client):
 
 def test_memories_endpoint_empty(client):
     assert client.get("/memories").json() == []
+
+
+def test_health_alias(client):
+    """/health works alongside /healthz (Cloud Run GFE reserves /healthz)."""
+    assert client.get("/health").json() == {"status": "ok"}
